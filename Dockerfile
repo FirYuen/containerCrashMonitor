@@ -11,6 +11,6 @@ FROM hairyhenderson/upx:latest as upx
 COPY --from=builder /src/app /app.org
 RUN upx --best --lzma -o /app /app.org
 
-FROM scratch
+FROM busybox:1.35.0
 COPY --from=upx /app .
 ENTRYPOINT ["./app"]

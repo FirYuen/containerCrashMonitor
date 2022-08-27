@@ -8,7 +8,8 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	docker "github.com/docker/docker/client"
-	openContainer "github.com/opencontainers/image-spec/specs-go/v1"
+	"os/signal"
+	//      openContainer "github.com/opencontainers/image-spec/specs-go/v1"
 	"log"
 	"os"
 	"path"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"time"
 )
+
+var BaseImageName = "busybox:1.35.0"
 
 func CrashedTooMuch(imageMatch string, interval, maxCount int) (string, bool) {
 	id := ""
@@ -78,23 +81,35 @@ func main() {
 	fmt.Println("image name: ", imageName)
 	fmt.Println("volumes: ", volumes)
 	fmt.Println("running...")
-	if !CheckImageExists("alpine:latest") {
-		PullAlpineImage()
+	if !CheckImageExists(BaseImageName) {
+		PullBusyboxImage()
 	}
-	tick := time.Tick(time.Second * 10)
+	// tick := time.Tick(time.Second * 180)
+
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt)
+
+	ticker := time.NewTicker(time.Second * 180)
+	defer ticker.Stop()
+
+loop:
 	for {
-		select {
-		case <-tick:
-			_, failedToomuch := CrashedTooMuch(imageName, 12000, 3)
-			if failedToomuch {
-				log.Println("crashed too much")
-				//client.VolumeRemove(context.Background(), volume, true)
-				err := EmptyVolume(volumes)
-				if err != nil {
-					log.Println(err)
-				}
-				//return
+		_, failedTooMuch := CrashedTooMuch(imageName, 180, 3)
+		if failedTooMuch {
+			log.Println("crashed too much")
+			err := EmptyVolume(volumes)
+			if err != nil {
+				log.Println(err)
 			}
+			time.Sleep(time.Second * 180)
+			//return
+		}
+
+		select {
+		case <-ticker.C:
+			continue
+		case <-interrupt:
+			break loop
 		}
 	}
 
@@ -117,10 +132,10 @@ func CheckImageExists(imageName string) bool {
 
 }
 
-func PullAlpineImage() {
-	fmt.Println("pulling alpine image")
+func PullBusyboxImage() {
+	fmt.Println("pulling busybox image")
 	client, _ := docker.NewClientWithOpts(docker.FromEnv)
-	rd, err := client.ImagePull(context.Background(), "alpine:latest", types.ImagePullOptions{})
+	rd, err := client.ImagePull(context.Background(), BaseImageName, types.ImagePullOptions{})
 	if err != nil {
 		log.Println(err)
 		return
@@ -145,7 +160,7 @@ func checkMount(f string) (isDir bool, mp string) {
 }
 
 func EmptyVolume(volume []string) error {
-	image := "alpine:latest"
+	image := BaseImageName
 	client, _ := docker.NewClientWithOpts(docker.FromEnv)
 	var mounts []mount.Mount
 	cmd := ""
@@ -182,10 +197,7 @@ func EmptyVolume(volume []string) error {
 		&container.HostConfig{
 			AutoRemove: true,
 			Mounts:     mounts,
-		}, nil, &openContainer.Platform{
-			Architecture: "amd64",
-			OS:           "linux",
-		}, utils.RandStr(10))
+		}, nil, nil, utils.RandStr(10))
 
 	if err != nil {
 		fmt.Println("error creating container: ", err)
